@@ -1,0 +1,48 @@
+In trap.c
+
+At line 16:
+int mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm); //homework 4
+
+At line 40:
+//Added for homework 4
+  char *mem;
+  uint vaddr;
+  struct proc *curproc = myproc();
+//Ends
+
+At line 87:
+//Added for homework 4
+  case T_PGFLT:
+    vaddr = PGROUNDDOWN(rcr2());
+    mem = kalloc();
+    if(mem == 0){
+      cprintf("out of memory\n");
+      return;
+    }
+    memset(mem, 0, PGSIZE);
+    if(mappages(curproc->pgdir, (char*)vaddr, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0){
+      cprintf("allocuvm out of memory (2)\n");
+      return;
+    }
+    break;
+//homework 4 ends 
+
+In sysproc.c
+Commented out original definition of sys_sbrk.
+At line 61:
+int
+sys_sbrk(void)
+{
+  int addr;
+  int n;
+
+  if(argint(0, &n) < 0)
+    return -1;
+  addr = myproc()->sz;
+  myproc()->sz += n;
+  return addr;
+}
+
+In vm.c
+
+Changed definition of mappages from static int to int at line 62.

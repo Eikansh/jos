@@ -1,0 +1,244 @@
+In pmap.c
+
+---------------------------------------------------------
+boot_alloc
+---------------------------------------------------------
+
+extern char end[];
+if((nextfree + n) > (end + npages*PGSIZE))
+	panic("boot_alloc: Out of memory\n");
+if(n > 0)
+{
+	result = nextfree;
+	nextfree = ROUNDUP((char *)(nextfree+n), PGSIZE);
+}
+else if(n == 0)
+	result = nextfree;
+return result;
+
+---------------------------------------------------------
+mem_init
+---------------------------------------------------------
+
+size_t n, size;
+
+kern_pgdir[PDX(UVPT)] = PADDR(kern_pgdir);
+kern_pgdir[PDX(UVPT)] = PADDR(kern_pgdir) | PTE_U | PTE_P;
+
+n = ROUNDUP(npages*sizeof(struct PageInfo), PGSIZE);
+pages = (struct PageInfo *) boot_alloc(n);
+memset(pages, 0, n);
+
+boot_map_region(kern_pgdir, UPAGES, n, PADDR(pages), PTE_U);
+boot_map_region(kern_pgdir, (uintptr_t)pages, n, PADDR(pages), PTE_P);
+
+boot_map_region(kern_pgdir, KSTACKTOP-KSTKSIZE, KSTKSIZE, PADDR(bootstack), PTE_W);
+
+size = 0xffffffff - KERNBASE + 1;
+boot_map_region(kern_pgdir, KERNBASE, size, 0, PTE_W);
+
+---------------------------------------------------------
+page_init
+---------------------------------------------------------
+
+size_t i;
+uint32_t last;
+
+pages[0].pp_ref = 1;
+pages[0].pp_link = NULL;
+
+//Intially page_free_list = 0
+for (i = 1; i < npages_basemem; i++) {
+	pages[i].pp_ref = 0;
+	pages[i].pp_link = page_free_list;
+	page_free_list = &pages[i];
+}
+
+//Get first free address and its page number
+last = PGNUM(PADDR(boot_alloc(0)));
+for(i = PGNUM(IOPHYSMEM); i < last; i++)
+{
+	pages[i].pp_ref = 1;
+	pages[i].pp_link = NULL;
+}
+
+for(i = last; i<npages; i++)
+{
+	pages[i].pp_ref = 0;
+	pages[i].pp_link = page_free_list;
+	page_free_list = &pages[i];
+}
+
+---------------------------------------------------------
+page_alloc
+---------------------------------------------------------
+
+struct PageInfo *pp;
+if(!page_free_list)
+	return NULL;
+pp = page_free_list; 
+if(alloc_flags & ALLOC_ZERO)
+	memset(page2kva(pp), 0, PGSIZE);
+page_free_list = page_free_list->pp_link;
+pp->pp_link = NULL;
+return pp;
+
+---------------------------------------------------------
+pgdir_walk(pde_t *pgdir, const void *va, int create)
+---------------------------------------------------------
+{
+	// Fill this function in
+	pde_t *pde;
+	pte_t *pgtab;
+	struct PageInfo *pp;
+	pde = &pgdir[PDX(va)];
+	if(*pde & PTE_P)
+		pgtab = (pte_t *)KADDR(PTE_ADDR(*pde));
+	else
+	{
+		if(!create || (pp = page_alloc(1)) == NULL)
+			return NULL;
+		*pde = page2pa(pp);
+		*pde = page2pa(pp) | PTE_P | PTE_W | PTE_U;
+		pp->pp_ref++;
+		pgtab = (pte_t *)KADDR(PTE_ADDR(*pde));
+	}
+	return &pgtab[PTX(va)];
+}
+
+---------------------------------------------------------
+boot_map_region(pde_t *pgdir, uintptr_t va, size_t size, physaddr_t pa, int perm)
+---------------------------------------------------------
+{
+	// Fill this function in
+	pte_t *pte;
+	assert(size % PGSIZE == 0);
+	assert(pa % PGSIZE == 0);
+	assert(va % PGSIZE == 0);
+	for (int i = 0, n = size / PGSIZE; i < n; i++) {
+		if((pte = pgdir_walk(pgdir,(void*) (va + i * PGSIZE), 1)) == NULL)
+			panic(" boot_map_region: mem not allocated");
+		*pte = (pa + i * PGSIZE) | perm | PTE_P;
+	}
+}
+
+---------------------------------------------------------
+page_insert(pde_t *pgdir, struct PageInfo *pp, void *va, int perm)
+---------------------------------------------------------
+{
+	// Fill this function in
+	pde_t *pte;
+	if((pte = pgdir_walk(pgdir, va, 1)) == NULL)
+		return -E_NO_MEM;
+	pp->pp_ref++;
+	if(*pte)
+		page_remove(pgdir, va);
+	*pte = page2pa(pp) | perm | PTE_P;
+	tlb_invalidate(pgdir, va);
+	return 0;
+}
+
+---------------------------------------------------------
+page_lookup(pde_t *pgdir, void *va, pte_t **pte_store)
+---------------------------------------------------------
+{
+	// Fill this function in
+	pte_t *pte;
+	struct PageInfo *pp;
+	if((pte = pgdir_walk(pgdir, va, 0)) == NULL)
+		return NULL;
+	if(pte_store)
+		*pte_store = pte;
+	pp = pa2page(PTE_ADDR(*pte));
+	return pp;
+}
+
+---------------------------------------------------------
+page_remove(pde_t *pgdir, void *va)
+---------------------------------------------------------
+{
+	// Fill this function in
+	struct PageInfo *pp;
+	pte_t *pte_store = pgdir;
+	if((pp = page_lookup(pgdir, va, &pte_store)) == NULL)
+		return;
+	page_decref(pp);
+	*pte_store = 0;
+	tlb_invalidate(pgdir, va);
+}
+
+==================================================================
+Question 1 
+
+x should be uintptr_t.
+
+Question 2
+
+0xf0118ef0:	0x003fd007	0x00118005	0x00000000	0x003ff007
+0xf0118f00:	0x003fe007	0x003fc007	0x003fb007	0x003fa007
+0xf0118f10:	0x003f9007	0x003f8007	0x003f7007	0x003f6007
+0xf0118f20:	0x003f5007	0x003f4007	0x003f3007	0x003f2007
+0xf0118f30:	0x003f1007	0x003f0007	0x003ef007	0x003ee007
+0xf0118f40:	0x003ed007	0x003ec007	0x003eb007	0x003ea007
+0xf0118f50:	0x003e9007	0x003e8007	0x003e7007	0x003e6007
+0xf0118f60:	0x003e5007	0x003e4007	0x003e3007	0x003e2007
+0xf0118f70:	0x003e1007	0x003e0007	0x003df007	0x003de007
+0xf0118f80:	0x003dd007	0x003dc007	0x003db007	0x003da007
+0xf0118f90:	0x003d9007	0x003d8007	0x003d7007	0x003d6007
+0xf0118fa0:	0x003d5007	0x003d4007	0x003d3007	0x003d2007
+0xf0118fb0:	0x003d1007	0x003d0007	0x003cf007	0x003ce007
+0xf0118fc0:	0x003cd007	0x003cc007	0x003cb007	0x003ca007
+0xf0118fd0:	0x003c9007	0x003c8007	0x003c7007	0x003c6007
+0xf0118fe0:	0x003c5007	0x003c4007	0x003c3007	0x003c2007
+0xf0118ff0:	0x003c1007	0x003c0007	0x003bf007	0x003be007
+
+
++--------+-----------------------+---------------------------------+
+| Entry  | Base Virtual Address  |   Points to (logically):        |
++--------+-----------------------+---------------------------------+
+| 1023   |  0xffffffff           |	\							   
+|  .     |                       |	 \                            
+|  .     |                       |	  |--Remapped physical memory 
+|  .     |                       |   /
+| 961    |                       |	/
+| 960    |	0xf0000000           |	0x003fe000(KSTACKTOP, KERNBASE)
+| 959    |	0xefc00000           |	0x003ff000
+| 958    |	0xef800000           |	0x00000000
+| 957    |  0xef400000           |	0x00118000(UVPT)
+| 956    |  0xef000000           |	0x003fd000(UPAGES)
+| 955    |  0xeec00000			 |	\
+|  .     |                       |	 \
+|  .     |                       |    |-- User memory(0x0)
+|  .     |                       |	 /
+|  0     |  0x00000000           |	/	
++--------+-----------------------+----------------------------------
+
+Question 3
+User program cannot access kernel memory because of the protection mechanism provided by the processor Intel 80386.
+If the user bit(PTE_U) is not set in the page table user program cannot access that entry of page table.
+If write bit(PTE_W) is not set, then page table entry is read-only for the user.
+When intializing the kernel part of page table these things were kept in mind.
+
+Question 4
+JOS can support 256 MB of physical memory.
+This is because we map physical memory 0x00000000 to 0x0ffffff ie, 256 MB memory to address KERNBASE(0xf0000000) to 0xffffffff.
+
+Question 5
+We need to have a single page table of size 256KB to manage memory. The table will have 2^16 entries of size 4B each. This will also increase the search time.
+This overhead is broken by using a 2-level page table for each process. The first table, called page directory, will point to page table containing 1024 entries. Page directory will also have 1024 entries. So, the size of page directory and page table is 4KB(1024 entries * 4B entry size).
+Hence, we need to allocate memory for page table if that entry is present in page directory.
+
+Question 6
+We transition to running at an EIP above KERNBASE after running instruction jmp *%eax at address 0x10002d. We can run at low eip even after enabling paging because in entrypgdir we have mapped virtual address [0, 4MB] and [KERNBASE, KERNBASE+4MB] to physical address [0, 4MB].
+
+
+====================================================================
+How page2pa() finds the physical address?
+
+To understand this, first we have to know about array pages.
+For each page, array pages stores the struct Pageinfo in it.
+There is one to one correspondence between physical pages and the array.
+For example page[0] mapes to physical page 1 ie, from physical address 0 to PGSIZE.
+So to find the physical address of a page, we need to subtract the address from address of array pages.
+This difference will be index into the array pages.
+And since there is corrspondence between physical pages and array pages we can shift the bits of index by PGSHIFT(12) bits to left to get the physical address of the page. 

@@ -1,0 +1,274 @@
+#Exercise 3
+The processor start executing 32-bit code after executing ljmp instruction at address 0x7c2d. .code32 tells assembler to assemble for 32-bit mode.
+Last instruction executed by bootloader is : call *0x10018 at address 0x7d6b.
+First instruction of kernel is : movw $0x1234,0x472 at address 0x10000c.
+Bootloader decides number of sectors to load by reading number of entries in program header table in e_phnum.
+It iterates through these entries in a loop and reading program stored at physical address p_pa of size p_memsz.
+
+#Exercise 5 
+Even after changing the address, still loading at 0x7C00. I don't know why.
+
+Exercise 6
+Before BIOS enters bootloader 
+0x100000 : 0x0
+Before bootloader enters the kernel
+0x100000 : 0x1badb002
+The instruction for kernel are loaded at this address.
+The above number is hex for add 0x1bad(%eax),%dh.
+
+#Exercise 7
+Before executing movl %eax, %cr0 
+0x00100000 : 0x1badb002
+0xf0100000 : 0x0
+
+After executing movl %eax, %cr0
+0x00100000 : 0x1badb002
+0xf0100000 : 0x1badb002
+With movl %eax, %cr0 we have enabled paging and virtual address 0xf0100000 is mapped to 0x00100000.
+
+If we comment out movl %eax, %cr0, instruction jmp *%eax will not run correctly because it is trying to jump to address 0xf010002f. There is no instruction stored at this address.
+
+#Exercise 8
+	num = getuint(&ap, lflag);
+	base = 8;
+	goto number;
+in lib/printfmt.c
+
+1. console.c uses cputchar(). printf.c uses cprintf() as the calling function. cprintf() uses vcprintf() to call vprintfmt(), with putch() as the parameter. vprintfmt() is defined in printfmt.c. putch() is defined in printf.c. putch () calls cputchar().
+
+2. The code clears the screen when it is full and moves the current pointer to start of the screen.
+
+3. fmt = 0xf0101837
+ap = 0xf010ffd4 
+vcprintf (fmt=0xf0101837 "x %d, y %x, z %d\n", ap=0xf010ffd4 "\001")
+cons_putc (c=-267380680) // c = 120 'x'
+cons_putc (c=-267380679) // c = 32  ' '
+va_arg(*ap, int);
+	Before : ap = (va_list) 0xf010ffd4 "\001"
+	After  : ap = (va_list) 0xf010ffd8 "\003"
+cons_putc (c=-267384645) // c = 49  '1'
+cons_putc (c=44) //','
+cons_putc (c=32) //' '
+cons_putc (c=121) //'y'
+cons_putc (c=32) //' '
+(va_list *) 0xf010ff8c
+(va_list) 0xf010ffd8 "\003"
+(va_list *) 0x3
+cons_putc (c=51) //'3'
+cons_putc (c=44) //','
+cons_putc (c=32) //' '
+cons_putc (c=122) //'z'
+cons_putc (c=32) //' '
+va_arg(*ap, int);
+ 	Before : (va_list) 0xf010ffdc "\004"
+ 	After  : (va_list) 0xf010ffe0 ""
+cons_putc (c=52) //'4'
+cons_putc (c=10) //'\n'
+
+4. fmt = 0xf0101837 "H%x Wo%s"
+ap = (va_list) 0xf010ffd4 <incomplete sequence \341>
+*ap = 16 '\020'
+vcprintf (fmt=0xf0101837 "H%x Wo%s", ap=0xf010ffd4 <incomplete sequence \341>)
+cons_putc (c=72) //'H'
+va_arg(*ap, int);
+ 	Before : ap = (va_list *) 0xf010ff8c
+ 	After  : ap = (va_list *) 0xe110
+cons_putc (c=101) //'e'
+cons_putc (c=49) //'1'
+cons_putc (c=49) //'1'
+cons_putc (c=48) //'0'
+cons_putc (c=32) //' '
+cons_putc (c=87) //'W'
+cons_putc (c=111) //'o'
+va_arg(*ap, int);
+ 	Before : (va_list) 0xf010ffd8 "\354\377", <incomplete sequence \360>
+ 	After  : (va_list) 0xf010ffdc ""
+cons_putc (c=114) //'r'
+cons_putc (c=108) //'l'
+cons_putc (c=100) //'d'
+
+Output : He110 World
+In big-endian i = 0x726c6400
+No need to change 57616	
+
+5. (va_list) 0xf010ffe8 "@\006"
+prints x=3 y=1600
+Don't know why
+
+#Exercise 9
+
+Kernel intializes stack at 0xf0110000.
+entry.S first align address to 4096 and then fills 32 KB space with 0. The stack pointer points to higher end of the stack.
+
+#Exercise 10
+
+Address of test_backtrace : 0xf0100040
+
+0xf010ffdc:     0xf01000d4      0x00000005      0x00001aac      0x00000640
+0xf010ffec:     0x00000000      0x00000000      0x00000000      0x00000000
+
+test_backtrace (x=5)
+	$esp = 0xf010ffdc
+	push $ebp (=0xf010fff8)
+	push $ebx (=0x10094)
+	sub $0xc $esp
+	push $ebx (=5)
+	push $0xf0101800
+	call <cprintf>
+	add $0x10 $esp
+	sub $0xc $esp
+	push $eax (=4)
+	call test_backtrace (push 0xf0100068)
+
+0xf010ffbc:     0xf0100068      0x00000004      0x00000005      0x00000000
+0xf010ffcc:     0x00010094      0x00010094      0x00010094      0xf010fff8
+
+test_backtrace (x=4)
+	$esp = 0xf010ffbc
+	push $ebp (=0xf010ffd8)
+	push $ebx (=5)
+	sub $0xc $esp
+	push $ebx (=4)
+	push $0xf0101800
+	call <cprintf>
+	add $0x10 $esp
+	sub $0xc $esp
+	push $eax (=3)
+	call test_backtrace (push 0xf0100068)
+
+0xf010ff9c:     0xf0100068      0x00000003      0x00000004      0x00000000
+0xf010ffac:     0x00000000      0x00000000      0x00000005      0xf010ffd8
+
+test_backtrace (x=3)
+	$esp = 0xf010ff9c
+	push $ebp (=0xf010ffb8)
+	push $ebx (=4)
+	sub $0xc $esp
+	push $ebx (=3)
+	push $0xf0101800
+	call <cprintf>
+	add $0x10 $esp
+	sub $0xc $esp
+	push $eax (=2)
+	call test_backtrace (push 0xf0100068)
+
+0xf010ff7c:     0xf0100068      0x00000002      0x00000003      0xf010ffb8
+0xf010ff8c:     0x00000000      0xf01008bf      0x00000004      0xf010ffb8
+
+test_backtrace (x=2)
+	$esp = 0xf010ff7c 
+	push $ebp (=0xf010ff98)
+	push $ebx (=3)
+	sub $0xc $esp
+	push $ebx (=2)
+	push $0xf0101800
+	call <cprintf>
+	add $0x10 $esp
+	sub $0xc $esp
+	push $eax (=1)
+	call test_backtrace (push 0xf0100068)
+
+0xf010ff5c:     0xf0100068      0x00000001      0x00000002      0xf010ff98
+0xf010ff6c:     0x00000000      0xf01008bf      0x00000003      0xf010ff98
+
+test_backtrace (x=1)
+	$esp = 0xf010ff5c
+	push $ebp (=0xf010ff78)
+	push $ebx (=2)
+	sub $0xc $esp
+	push $ebx (=1)
+	push $0xf0101800
+	call <cprintf>
+	add $0x10 $esp
+	sub $0xc $esp
+	push $eax (=0)
+	call test_backtrace (push 0xf0100068)
+
+0xf010ff3c:     0xf0100068      0x00000000      0x00000001      0xf010ff78
+0xf010ff4c:     0x00000000      0xf01008bf      0x00000002      0xf010ff78
+
+test_backtrace (x=0)
+	$esp = 0xf010ff3c
+	push $ebp (=0xf010ff58)
+	push $ebx (=1)
+	sub $0xc $esp
+	push $ebx (=0)
+	push $0xf0101800
+	call <cprintf>
+	add $0x10 $esp
+	sub $0x4 $esp
+	push $0x0
+	push $0x0
+	push $0x0
+	call mon_backtrace (push 0xf010007b)
+return from mon_backtrace 
+0xf010ff20:     0x00000000      0x00000000      0x00000000      0x00000000
+0xf010ff30:     0xf01008bf      0x00000001      0xf010ff58      0xf0100068
+
+#Exercise 11
+
+int
+mon_backtrace(int argc, char **argv, struct Trapframe *tf)
+{
+	// Your code here.
+	uint32_t *ebp, *eip, *arg;
+	uint32_t flag;
+	ebp = (uint32_t *)read_ebp();
+	cprintf("Stack backtrace :\n");
+	while(ebp != (uint32_t *)0x00000000)
+	{
+		eip = ebp + 1;
+		arg = ebp + 2;
+		cprintf("ebp %08x eip %08x args %08x %08x %08x %08x %08x\n", ebp, *eip, *arg, *(arg+1), *(arg+2), *(arg+3), *(arg+4));
+		ebp = (uint32_t *) *ebp;
+	}
+	return 0;
+}
+in kern/monitor.c
+
+#Exercise 12
+
+__STAB_BEGIN__ and __STAB_END__ are defined in kernel.ld at line 27 and 29 respectively.
+__STAB_BEGIN__ store the VMA of .stab section. .stab section is loaded at LMA which can be viewed by running command "objdump -h obj/kern/kernel".
+Stab is a symbol table which stores data in the form of structure defined in /lab/inc/stab.h.
+The data stored in the symbol table of kernel can be seen by command "objdump -G obj/kern/kernel".
+n_strx in structure Stab is index into array of type struct Stab.
+
+stab_binsearch(stabs, &lline, &rline, N_SLINE, addr);
+if(lline <= rline)
+	info->eip_line = stabs[lline].n_desc;
+else
+	return -1;
+to kdebug.c at line 183
+
+{ "backtrace", "Display all stack frame in kernel stack", mon_backtrace} 
+in static struct Command commands[] in monitor.c
+
+int
+mon_backtrace(int argc, char **argv, struct Trapframe *tf)
+{
+	// Your code here.
+	uint32_t *ebp, *eip, *arg;
+	uint32_t flag, i, fn_offset;
+	struct Eipdebuginfo info;
+	ebp = (uint32_t *)read_ebp();
+	cprintf("Stack backtrace :\n");
+	while(ebp != (uint32_t *)0x00000000)
+	{
+		eip = ebp + 1;
+		arg = ebp + 2;
+		flag = debuginfo_eip(*eip, &info);
+		fn_offset = *eip - info.eip_fn_addr;
+		cprintf("ebp %08x eip %08x args %08x %08x %08x %08x %08x\n%s:%d: ", ebp, *eip, *arg, \
+			*(arg+1), *(arg+2), *(arg+3), *(arg+4), info.eip_file, info.eip_line); 
+		for(i=0;i<info.eip_fn_namelen;i++)
+			cprintf("%c", info.eip_fn_name[i]);
+		cprintf("+%d", fn_offset);
+		cprintf("\n");
+		ebp = (uint32_t *) *ebp;
+	}
+	return 0;
+}
+
+int mon_backtrace(int argc, char **argv, struct Trapframe *tf);
+in monitor.h
