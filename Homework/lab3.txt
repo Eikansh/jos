@@ -1,0 +1,374 @@
+========================================================
+Exercise 1
+========================================================
+
+	n = ROUNDUP(NENV*sizeof(struct Env), PGSIZE);
+	envs = (struct Env *) boot_alloc(n);
+	memset(envs, 0, n);
+
+	n = ROUNDUP(npages*sizeof(struct PageInfo), PGSIZE);
+in pmap.c : mem_init
+
+
+========================================================
+Exercise 2
+========================================================
+In env.c
+
+---------------------------------------------------------
+env_init
+---------------------------------------------------------
+
+	int32_t i;
+
+	envs[NENV-1].env_status = ENV_FREE;
+	envs[NENV-1].env_id = 0;
+	envs[NENV-1].env_link = NULL;
+	env_free_list = &envs[NENV-1];
+
+	for(i=NENV-2; i>=0; i--)
+	{
+		envs[i].env_status = ENV_FREE;
+		envs[i].env_id = 0;
+		envs[i].env_link = env_free_list;
+		env_free_list = &envs[i];
+	}
+
+---------------------------------------------------------
+env_setup_vm
+---------------------------------------------------------
+
+	int n;
+
+	e->env_pgdir = page2kva(p);
+
+	n = ROUNDUP(npages*sizeof(struct PageInfo), PGSIZE);
+	n = n/PGSIZE;
+	for(i=0; i<n; i++)
+	{
+		if(page_insert(e->env_pgdir, pa2page(PADDR(pages + i*PGSIZE)), (void *)(UPAGES + i*PGSIZE), PTE_U))
+			return -E_NO_MEM;
+		if(page_insert(e->env_pgdir, pa2page(PADDR(pages + i*PGSIZE)), (void *)(pages + i*PGSIZE), PTE_P))
+			return -E_NO_MEM;
+	}
+
+	n = ROUNDUP(NENV*sizeof(struct Env), PGSIZE);
+	n = n/PGSIZE;
+	for(i=0; i<n; i++)
+	{
+		if(page_insert(e->env_pgdir, pa2page(PADDR(envs + i*PGSIZE)), (void *)(UENVS + i*PGSIZE), PTE_U))
+			return -E_NO_MEM;
+		if(page_insert(e->env_pgdir, pa2page(PADDR(envs + i*PGSIZE)), (void *)(envs + i*PGSIZE), PTE_P))
+			return -E_NO_MEM;
+	}
+
+	n = KSTKSIZE/PGSIZE;
+	for(i=0; i<n; i++)
+		if(page_insert(e->env_pgdir, pa2page(PADDR(bootstack + i*PGSIZE)), (void *)(KSTACKTOP-KSTKSIZE + i*PGSIZE), PTE_W))
+			return -E_NO_MEM;
+
+	for(i=0; i<npages; i++)
+	{
+		if(page_insert(e->env_pgdir, pa2page((i*PGSIZE)), (void *)(KERNBASE + i*PGSIZE), PTE_W))
+			return -E_NO_MEM;
+	}
+
+---------------------------------------------------------
+region_alloc
+---------------------------------------------------------
+	uint8_t *end_va, *start_va;
+	struct PageInfo *p = NULL;
+	end_va = (uint8_t *)ROUNDUP(((uint32_t)va+len), PGSIZE);
+	start_va = (uint8_t *)ROUNDDOWN(va, PGSIZE);
+	for(; start_va < end_va; start_va += PGSIZE)
+	{
+		if (!(p = page_alloc(0)))
+			panic("region_alloc: %e", -E_NO_MEM);
+		if((page_insert(e->env_pgdir, p, (void*)start_va, PTE_U|PTE_W)))
+			panic("region_alloc: %e", -E_NO_MEM);
+	}
+
+---------------------------------------------------------
+load_icode
+---------------------------------------------------------
+	struct Proghdr *ph, *eph;
+	struct Elf *ELFHDR;
+	uint32_t cr3, i;
+
+	cr3 = rcr3();
+	lcr3(PADDR(e->env_pgdir));
+
+	ELFHDR = (struct Elf *)binary;
+	if (ELFHDR->e_magic != ELF_MAGIC)
+		panic("load_icode: invalid ELF binary");
+
+	ph = (struct Proghdr *) ((uint8_t *) ELFHDR + ELFHDR->e_phoff);
+	eph = ph + ELFHDR->e_phnum;
+	for (; ph < eph; ph++)
+	{
+		assert(ph->p_filesz <= ph->p_memsz);
+		region_alloc(e, (void *)ph->p_va, ph->p_memsz);
+		if(ph->p_type == ELF_PROG_LOAD)
+		{
+			memcpy((void *)ph->p_va, (void *)(binary + ph->p_offset), ph->p_filesz);
+			memset((void *)(ph->p_va + ph->p_filesz), 0, (ph->p_memsz - ph->p_filesz));
+		}
+		else
+			memset((void *)ph->p_va, 0, ph->p_memsz);
+	}
+
+	// Now map one page for the program's initial stack
+	// at virtual address USTACKTOP - PGSIZE.
+	region_alloc(e, (void *)(USTACKTOP - PGSIZE), PGSIZE);
+	memset((void *)(USTACKTOP - PGSIZE), 0, PGSIZE);
+	// LAB 3: Your code here.
+	lcr3(cr3);
+	e->env_tf.tf_eip = (uintptr_t)ELFHDR->e_entry;
+
+---------------------------------------------------------
+env_create
+---------------------------------------------------------
+	struct Env *e;
+	int r;
+	if((r = env_alloc(&e, 0)) < 0)
+		panic("env_create: %e", r);
+	load_icode(e, binary);
+	e->env_type = type;
+
+---------------------------------------------------------
+env_run
+---------------------------------------------------------
+	if(curenv && curenv->env_status == ENV_RUNNING)
+		curenv->env_status = ENV_RUNNABLE;
+
+	curenv = e;
+	curenv->env_status = ENV_RUNNING;
+	curenv->env_runs++;
+	lcr3(PADDR(curenv->env_pgdir));
+
+	env_pop_tf(&e->env_tf);
+
+
+=========================================================
+Exercise 4
+=========================================================
+In trapentry.S
+
+TRAPHANDLER_NOEC(t_divide, T_DIVIDE)
+TRAPHANDLER_NOEC(t_debug, T_DEBUG)
+TRAPHANDLER_NOEC(t_nmi, T_NMI)
+TRAPHANDLER_NOEC(t_brkpt, T_BRKPT)
+TRAPHANDLER_NOEC(t_oflow, T_OFLOW)
+TRAPHANDLER_NOEC(t_bound, T_BOUND)
+TRAPHANDLER_NOEC(t_illop, T_ILLOP)
+TRAPHANDLER_NOEC(t_device, T_DEVICE)
+TRAPHANDLER(t_dblflt, T_DBLFLT)
+TRAPHANDLER(t_tss, T_TSS)
+TRAPHANDLER(t_segnp, T_SEGNP)
+TRAPHANDLER(t_stack, T_STACK)
+TRAPHANDLER(t_gpflt, T_GPFLT)
+TRAPHANDLER(t_pgflt, T_PGFLT)
+TRAPHANDLER_NOEC(t_fperr, T_FPERR)
+TRAPHANDLER_NOEC(t_align, T_ALIGN)
+TRAPHANDLER_NOEC(t_mchk, T_MCHK)
+TRAPHANDLER_NOEC(t_simderr, T_SIMDERR)
+
+_alltraps:
+	pushl %ds
+	pushl %es
+	pushal
+
+	movw $GD_KD, %ax
+	movw %ax, %ds
+	movw %ax, %es
+
+	pushl %esp
+	call trap
+	
+--------------------------------------------------------
+In trap.c
+
+---------------------------------------------------------
+trap_init
+---------------------------------------------------------
+	//declaring the function defined in trapentry.S
+	void t_divide();
+	void t_debug();
+	void t_nmi();
+	void t_brkpt();
+	void t_oflow();
+	void t_bound();
+	void t_illop();
+	void t_device();
+	void t_dblflt();
+	void t_tss();
+	void t_segnp();
+	void t_stack();
+	void t_gpflt();
+	void t_pgflt();
+	void t_fperr();
+	void t_align();
+	void t_mchk();
+	void t_simderr();
+
+	SETGATE(idt[T_DIVIDE], 1, GD_KT, t_divide, 0);
+	SETGATE(idt[T_DEBUG], 1, GD_KT, t_debug, 0);
+	SETGATE(idt[T_NMI], 0, GD_KT, t_nmi, 0);
+	SETGATE(idt[T_BRKPT], 1, GD_KT, t_brkpt, 0);
+	SETGATE(idt[T_OFLOW], 1, GD_KT, t_oflow, 0);
+	SETGATE(idt[T_BOUND], 1, GD_KT, t_bound, 0);
+	SETGATE(idt[T_ILLOP], 1, GD_KT, t_illop, 0);
+	SETGATE(idt[T_DEVICE], 1, GD_KT, t_device, 0);
+	SETGATE(idt[T_DBLFLT], 0, GD_KT, t_dblflt, 0);
+	SETGATE(idt[T_TSS], 1, GD_KT, t_tss, 0);
+	SETGATE(idt[T_SEGNP], 1, GD_KT, t_segnp, 0);
+	SETGATE(idt[T_STACK], 1, GD_KT, t_stack, 0);
+	SETGATE(idt[T_GPFLT], 1, GD_KT, t_gpflt, 0);
+	SETGATE(idt[T_PGFLT], 1, GD_KT, t_pgflt, 0);
+	SETGATE(idt[T_FPERR], 1, GD_KT, t_fperr, 0);
+	SETGATE(idt[T_ALIGN], 1, GD_KT, t_align, 0);
+	SETGATE(idt[T_MCHK], 0, GD_KT, t_mchk, 0);
+	SETGATE(idt[T_SIMDERR], 1, GD_KT, t_simderr, 0);
+
+=========================================================
+Exercise 5
+=========================================================
+In trap_dispatch
+
+	switch(tf->tf_trapno)
+	{
+		case T_PGFLT : 
+			page_fault_handler(tf);
+		default :
+			break;
+	}
+
+=========================================================
+Exercise 6
+=========================================================
+In trap_init
+
+	SETGATE(idt[T_BRKPT], 1, GD_KT, t_brkpt, 3);
+
+In trap_dispatch
+
+case T_BRKPT : 
+	monitor(tf);
+
+=========================================================
+Exercise 7
+=========================================================
+In testentry.S
+
+TRAPHANDLER_NOEC(t_syscall, T_SYSCALL)
+
+In trap.c
+trap_init :
+	void t_syscall();
+	SETGATE(idt[T_SYSCALL], 0, GD_KT, t_syscall, 3);
+
+trap_dispatch : 
+	case T_SYSCALL : 
+		tf->tf_regs.reg_eax = syscall(tf->tf_regs.reg_eax, tf->tf_regs.reg_edx, tf->tf_regs.reg_ecx,\
+		tf->tf_regs.reg_ebx, tf->tf_regs.reg_edi, tf->tf_regs.reg_esi);
+		return;
+
+In syscall.c
+syscall :
+	switch (syscallno) {
+		case SYS_cputs : 
+			sys_cputs((char *) a1, (size_t) a2);
+			return 0;
+		case SYS_cgetc :
+			return sys_cgetc();
+		case SYS_getenvid :
+			return sys_getenvid();
+		case SYS_env_destroy :
+			return sys_env_destroy((envid_t) a1); 
+		default:
+			return -E_INVAL;
+	}
+
+
+=========================================================
+Exercise 8
+=========================================================
+In libmain.c
+libmain
+	thisenv = &envs[ENVX(sys_getenvid())];
+
+
+=========================================================
+Exercise 9
+=========================================================
+In page_fault_handler
+	if ((tf->tf_cs & 1) == 0)
+		panic("Page fault in kernel");
+
+In pmap.c
+---------------------------------------------------------
+user_mem_check
+---------------------------------------------------------
+	struct PageInfo *pp = NULL;
+	uint8_t *end_va, *start_va;
+
+	pte_t *pte = env->env_pgdir;
+
+	end_va = (uint8_t *)ROUNDUP(((uint32_t)va+len), PGSIZE);
+	start_va = (uint8_t *)va;
+
+	for(; start_va < end_va; start_va = ROUNDDOWN(start_va + PGSIZE, PGSIZE))
+	{
+		if((pp = page_lookup(env->env_pgdir, (void *) start_va, &pte)) == NULL || !(*pte & perm))
+		{
+			user_mem_check_addr = (uintptr_t) start_va;
+			return -E_FAULT;
+		}
+		else if((perm & PTE_U) == PTE_U && (uintptr_t) start_va > ULIM)
+		{
+			user_mem_check_addr = (uintptr_t) start_va;
+			return -E_FAULT;
+		}
+	}
+	return 0;
+--------------------------------------------------------------
+In syscall.c
+sys_cputs
+	user_mem_assert(curenv, s, len, PTE_U);
+
+In kdebug.c
+debuginfo_eip
+if(user_mem_check(curenv, usd, sizeof(struct UserStabData), PTE_U) < 0)
+	return -1;
+
+if(user_mem_check(curenv, stabs, sizeof(struct Stab), PTE_U) < 0)
+	return -1;
+if(user_mem_check(curenv, stabstr, sizeof(char *), PTE_U) < 0)
+	return -1;
+
+=========================================================
+Questions
+=========================================================
+Answer 1 :
+If we have only one handler for every exception, then we can't select choose the interrupts which can be generated by user. Individual handler provide us with fine-grained control over the exception and who can call them.
+
+Answer 2 : 
+
+	SETGATE(idt[T_PGFLT], 1, GD_KT, t_pgflt, 0);
+Change the last parameter in SETGATE from 3 to 0.
+When it is 3 the user has the privilege to directly call interrupt service routine. If user does not have privilege(ie, it is 0) the processor will produce General Protection Interrupt ie, interrupt 13.
+If user can invoke kernel's page fault handler, then it can cause security issues. Depending on page fault handler, user can acquire permission to read/write pages of other users.
+
+Answer 3 : 
+We have to intialize breakpoint exception such that user have permission to access the exception handler. If processor finds that user has producced an interrupt which it can't access, it will produce General Protection exception.
+To set it up in right manner, we have to call SETGATE with following parameter :
+	
+	SETGATE(idt[T_BRKPT], 1, GD_KT, t_brkpt, 3);
+
+instead of :
+
+	SETGATE(idt[T_BRKPT], 1, GD_KT, t_brkpt, 0);
+
+Answer 4 :
+The point of above mechanism is to provide a secure way to handle exception.
+
