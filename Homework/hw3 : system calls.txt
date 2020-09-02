@@ -1,0 +1,34 @@
+#define SYS_date  22 
+in syscall.h
+
+extern int sys_date(void);
+in syscall.c
+
+[SYS_date]    sys_date 
+in syscall.c
+Added above line in *syscalls[](), so that it can call sys_date function
+
+int date(struct rtcdate *r); 
+in user.h 
+It defines date system call
+
+Added SYSCALL(date) to usys.S so that it can move SYS_date to %eax and call system call interrupt.
+
+int sys_date(void)
+{
+  struct rtcdate *r;
+  int i;
+  //to get the address of struct rtcdate passed in date.c
+  i = argptr(0, (void *)&r, sizeof(r));
+  if(i < 0)
+    return -1;
+  cmostime(r);
+  return 0;
+}
+in sysproc.c
+
+printf(1, "%d/%d/%d  %d:%d:%d GMT\n", r.day, r.month, r.year, r.hour, r.minute, r.second);
+in date.c
+
+add _date to the UPROGS definition in Makefile.
+It causes date.c to be compiled as xv6 user level program.
